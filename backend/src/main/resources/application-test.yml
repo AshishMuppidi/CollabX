@@ -1,0 +1,26 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:testdb;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1
+    username: sa
+    password: ""
+    driver-class-name: org.h2.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.H2Dialect
+        format_sql: false
+
+  flyway:
+    enabled: false
+
+collabx:
+  cors:
+    allowed-origins: http://localhost:5173
+  judge0:
+    api-url: https://ce.judge0.com
+    poll-interval-ms: 100
+    max-poll-attempts: 3
+    fetch-timeout-ms: 2000
