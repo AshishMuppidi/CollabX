@@ -21,10 +21,17 @@ public class RoomDto {
     private String currentLanguage;
     private Instant createdAt;
 
+    @JsonProperty("roomToken")
+    private String roomToken;
+
     public RoomDto() {
     }
 
     public RoomDto(String roomId, String creatorUsername, String code, String currentLanguage, Instant createdAt) {
+        this(roomId, creatorUsername, code, currentLanguage, createdAt, null);
+    }
+
+    public RoomDto(String roomId, String creatorUsername, String code, String currentLanguage, Instant createdAt, String roomToken) {
         this.roomId = roomId;
         this.roomIdSnake = roomId;
         this.creatorUsername = creatorUsername;
@@ -32,6 +39,15 @@ public class RoomDto {
         this.code = code;
         this.currentLanguage = currentLanguage;
         this.createdAt = createdAt;
+        this.roomToken = roomToken;
+    }
+
+    public String getRoomToken() {
+        return roomToken;
+    }
+
+    public void setRoomToken(String roomToken) {
+        this.roomToken = roomToken;
     }
 
     public String getRoomId() {

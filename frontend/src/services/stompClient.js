@@ -11,7 +11,7 @@ class CollabXStompClient {
     this.onDisconnectCallbacks = new Set();
   }
 
-  connect(wsUrl) {
+  connect(wsUrl, connectHeaders = {}) {
     if (this.client && (this.client.active || this.isConnected)) {
       return this;
     }
@@ -20,6 +20,7 @@ class CollabXStompClient {
 
     this.client = new Client({
       webSocketFactory: () => new SockJS(endpoint),
+      connectHeaders: connectHeaders || {},
       reconnectDelay: 3000,
       heartbeatIncoming: 10000,
       heartbeatOutgoing: 10000,
@@ -30,8 +31,8 @@ class CollabXStompClient {
         // Process pending subscriptions
         const pending = [...this.pendingSubscriptions];
         this.pendingSubscriptions = [];
-        pending.forEach(({ topic, callback }) => {
-          this.subscribe(topic, callback);
+        pending.forEach(({ topic, callback, headers }) => {
+          this.subscribe(topic, callback, headers);
         });
 
         this.onConnectCallbacks.forEach((cb) => {
@@ -72,9 +73,9 @@ class CollabXStompClient {
     return () => this.onDisconnectCallbacks.delete(callback);
   }
 
-  subscribe(topic, callback) {
+  subscribe(topic, callback, headers = {}) {
     if (!this.isConnected || !this.client) {
-      this.pendingSubscriptions.push({ topic, callback });
+      this.pendingSubscriptions.push({ topic, callback, headers });
       return () => {
         this.pendingSubscriptions = this.pendingSubscriptions.filter(
           (s) => !(s.topic === topic && s.callback === callback)
@@ -98,7 +99,7 @@ class CollabXStompClient {
       } catch {
         callback(message.body);
       }
-    });
+    }, headers);
 
     this.subscriptions.set(topic, sub);
 
@@ -112,7 +113,7 @@ class CollabXStompClient {
     };
   }
 
-  publish(destination, body = {}) {
+  publish(destination, body = {}, headers = {}) {
     if (!this.client || !this.isConnected) {
       console.warn("[STOMP] Cannot publish while not connected:", destination);
       return;
@@ -120,6 +121,7 @@ class CollabXStompClient {
 
     this.client.publish({
       destination,
+      headers: headers || {},
       body: typeof body === "string" ? body : JSON.stringify(body),
     });
   }

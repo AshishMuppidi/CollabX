@@ -23,7 +23,8 @@ public class CollaborationWsController {
     public void joinRoom(@DestinationVariable String roomId,
                          @Payload Map<String, String> payload,
                          SimpMessageHeaderAccessor headerAccessor) {
-        String username = payload.get("username");
+        String authorizedUser = getAuthorizedUser(headerAccessor);
+        String username = authorizedUser != null ? authorizedUser : payload.get("username");
         String sessionId = headerAccessor.getSessionId();
         collaborationService.userJoined(sessionId, roomId, username);
     }
@@ -37,15 +38,25 @@ public class CollaborationWsController {
 
     @MessageMapping("/room/{roomId}/code")
     public void syncCode(@DestinationVariable String roomId,
-                         @Payload CodeSyncDto codeSyncDto) {
+                         @Payload CodeSyncDto codeSyncDto,
+                         SimpMessageHeaderAccessor headerAccessor) {
         codeSyncDto.setRoomId(roomId);
+        String authorizedUser = getAuthorizedUser(headerAccessor);
+        if (authorizedUser != null) {
+            codeSyncDto.setUsername(authorizedUser);
+        }
         collaborationService.broadcastCode(roomId, codeSyncDto);
     }
 
     @MessageMapping("/room/{roomId}/language")
     public void changeLanguage(@DestinationVariable String roomId,
-                               @Payload LanguageChangeDto languageDto) {
+                               @Payload LanguageChangeDto languageDto,
+                               SimpMessageHeaderAccessor headerAccessor) {
         languageDto.setRoomId(roomId);
+        String authorizedUser = getAuthorizedUser(headerAccessor);
+        if (authorizedUser != null) {
+            languageDto.setRequestedBy(authorizedUser);
+        }
         if (languageDto.getFileName() == null || languageDto.getFileName().isEmpty()) {
             languageDto.setFileName(CollaborationService.getFileNameForLanguage(languageDto.getLanguage()));
         }
@@ -54,22 +65,40 @@ public class CollaborationWsController {
 
     @MessageMapping("/room/{roomId}/chat")
     public void sendChat(@DestinationVariable String roomId,
-                         @Payload ChatMessageDto chatMessage) {
+                         @Payload ChatMessageDto chatMessage,
+                         SimpMessageHeaderAccessor headerAccessor) {
         chatMessage.setRoomId(roomId);
+        String authorizedUser = getAuthorizedUser(headerAccessor);
+        if (authorizedUser != null) {
+            chatMessage.setUsername(authorizedUser);
+        }
         collaborationService.broadcastChat(roomId, chatMessage);
     }
 
     @MessageMapping("/room/{roomId}/typing")
     public void sendTyping(@DestinationVariable String roomId,
-                           @Payload TypingDto typingDto) {
+                           @Payload TypingDto typingDto,
+                           SimpMessageHeaderAccessor headerAccessor) {
         typingDto.setRoomId(roomId);
+        String authorizedUser = getAuthorizedUser(headerAccessor);
+        if (authorizedUser != null) {
+            typingDto.setUsername(authorizedUser);
+        }
         collaborationService.broadcastTyping(roomId, typingDto);
     }
 
     @MessageMapping("/room/{roomId}/preview")
     public void syncPreview(@DestinationVariable String roomId,
-                            @Payload HtmlPreviewDto previewDto) {
+                            @Payload HtmlPreviewDto previewDto,
+                            SimpMessageHeaderAccessor headerAccessor) {
         previewDto.setRoomId(roomId);
         collaborationService.broadcastPreview(roomId, previewDto);
+    }
+
+    private String getAuthorizedUser(SimpMessageHeaderAccessor headerAccessor) {
+        if (headerAccessor != null && headerAccessor.getSessionAttributes() != null) {
+            return (String) headerAccessor.getSessionAttributes().get("authorized_user");
+        }
+        return null;
     }
 }

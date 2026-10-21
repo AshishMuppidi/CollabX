@@ -131,6 +131,7 @@ export default function EditorPage() {
   const navigate = useNavigate();
   const initialUsername = location.state?.username || "";
   const initialPassword = location.state?.password || "";
+  const initialToken = location.state?.token || (typeof window !== "undefined" ? sessionStorage.getItem(`collabx_token_${roomId}`) : null);
 
   const [code, setCode] = useState("// Welcome to CollabX");
   const [users, setUsers] = useState([]);
@@ -140,6 +141,7 @@ export default function EditorPage() {
   const [usernameInput, setUsernameInput] = useState(initialUsername || "");
   const [passwordInput, setPasswordInput] = useState(initialPassword);
   const [username, setUsername] = useState(initialUsername);
+  const [roomToken, setRoomToken] = useState(initialToken);
   const [hasJoinedRoom, setHasJoinedRoom] = useState(false);
   const [isVerifyingRoom, setIsVerifyingRoom] = useState(false);
   const [selectedLanguage, setSelectedLanguage] = useState(
@@ -363,26 +365,28 @@ export default function EditorPage() {
       applyCollaborativeLanguage(nextLanguage);
     };
 
-    // Subscriptions
+    // Subscriptions with room token authorization headers
+    const subHeaders = roomToken ? { "X-Room-Token": roomToken } : {};
+
     const unsubUsers = stompClient.subscribe(`/topic/room.${roomId}.users`, (onlineUsers) => {
       if (Array.isArray(onlineUsers)) {
         setUsers(onlineUsers);
       }
-    });
+    }, subHeaders);
 
     const unsubCode = stompClient.subscribe(`/topic/room.${roomId}.code`, (data) => {
       if (data && typeof data.code === "string" && data.username !== username) {
         setCode(data.code);
       }
-    });
+    }, subHeaders);
 
-    const unsubLang = stompClient.subscribe(`/topic/room.${roomId}.language`, handleLanguageChange);
+    const unsubLang = stompClient.subscribe(`/topic/room.${roomId}.language`, handleLanguageChange, subHeaders);
 
     const unsubChat = stompClient.subscribe(`/topic/room.${roomId}.chat`, (data) => {
       if (data) {
         setMessages((prev) => [...prev, data]);
       }
-    });
+    }, subHeaders);
 
     const unsubTyping = stompClient.subscribe(`/topic/room.${roomId}.typing`, (data) => {
       if (!data?.username || data.username === username) return;
@@ -396,9 +400,9 @@ export default function EditorPage() {
       typingTimeoutRef.current = setTimeout(() => {
         setTypingUser("");
       }, 1000);
-    });
+    }, subHeaders);
 
-    const unsubExec = stompClient.subscribe(`/topic/room.${roomId}.execution`, handleExecutionUpdate);
+    const unsubExec = stompClient.subscribe(`/topic/room.${roomId}.execution`, handleExecutionUpdate, subHeaders);
 
     const unsubPreview = stompClient.subscribe(`/topic/room.${roomId}.preview`, (payload) => {
       if (!shouldApplyRoomEvent(payload, roomId)) return;
@@ -406,15 +410,16 @@ export default function EditorPage() {
       if (hasHtmlPreviewMarkup(payload)) {
         syncHtmlPreview(getHtmlPreviewMarkup(payload));
       }
-    });
+    }, subHeaders);
 
-    // Notify backend on connection
+    // Notify backend on connection with token
     const unsubConnect = stompClient.onConnected(() => {
       stompClient.publish(`/app/room/${roomId}/join`, {
         roomId,
         username,
         password,
-      });
+        token: roomToken,
+      }, subHeaders);
     });
 
     return () => {
@@ -474,6 +479,7 @@ export default function EditorPage() {
     stompClient.disconnect();
     localStorage.removeItem("username");
     sessionStorage.removeItem("username");
+    sessionStorage.removeItem(`collabx_token_${roomId}`);
     setShowExitConfirm(false);
     navigate("/");
   };
@@ -521,6 +527,7 @@ export default function EditorPage() {
         body: JSON.stringify({
           roomId,
           password: nextPassword,
+          username: nextUsername,
         }),
       });
 
@@ -528,6 +535,12 @@ export default function EditorPage() {
       if (!response.ok) {
         toast.error(data?.message || "Incorrect room password");
         return;
+      }
+
+      const token = data?.roomToken || data?.token;
+      if (token) {
+        setRoomToken(token);
+        sessionStorage.setItem(`collabx_token_${roomId}`, token);
       }
 
       localStorage.setItem("username", nextUsername);
@@ -579,6 +592,7 @@ export default function EditorPage() {
           languageId: activeLanguage?.judge0Id,
           stdin,
           username,
+          token: roomToken,
         }),
       });
 

@@ -5,6 +5,7 @@ import com.collabx.codeexecution.dto.ExecutionResultResponse;
 import com.collabx.codeexecution.dto.Judge0SubmissionRequest;
 import com.collabx.codeexecution.dto.Judge0SubmissionResponse;
 import com.collabx.common.exception.BadRequestException;
+import com.collabx.common.security.RoomTokenService;
 import com.collabx.config.Judge0Properties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,6 +17,7 @@ import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -23,6 +25,7 @@ import java.util.Map;
 public class Judge0Service {
 
     private static final Logger log = LoggerFactory.getLogger(Judge0Service.class);
+    private static final long MAX_EXECUTION_TIMEOUT_MS = 30_000;
 
     private static final Map<String, Integer> LANGUAGE_ID_MAP = new HashMap<>();
 
@@ -51,12 +54,15 @@ public class Judge0Service {
     private final Judge0Properties properties;
     private final RestTemplate restTemplate;
     private final SimpMessagingTemplate messagingTemplate;
+    private final RoomTokenService roomTokenService;
 
     public Judge0Service(Judge0Properties properties,
                          RestTemplateBuilder restTemplateBuilder,
-                         SimpMessagingTemplate messagingTemplate) {
+                         SimpMessagingTemplate messagingTemplate,
+                         RoomTokenService roomTokenService) {
         this.properties = properties;
         this.messagingTemplate = messagingTemplate;
+        this.roomTokenService = roomTokenService;
         this.restTemplate = restTemplateBuilder
                 .setConnectTimeout(Duration.ofMillis(properties.getFetchTimeoutMs()))
                 .setReadTimeout(Duration.ofMillis(properties.getFetchTimeoutMs()))
@@ -67,9 +73,10 @@ public class Judge0Service {
         String language = request.getLanguage() != null ? request.getLanguage().trim().toLowerCase() : "";
         String code = request.getCode() != null ? request.getCode() : "";
         String roomId = request.getRoomId();
+        boolean isAuthorizedForRoom = isRoomAuthorized(roomId, request.getToken());
 
-        // Broadcast 'running' status to room if roomId is present
-        if (roomId != null && !roomId.trim().isEmpty()) {
+        // Broadcast 'running' status to room only if caller is authorized for this room
+        if (isAuthorizedForRoom) {
             Map<String, Object> runningUpdate = new HashMap<>();
             runningUpdate.put("roomId", roomId);
             runningUpdate.put("status", "running");
@@ -83,7 +90,9 @@ public class Judge0Service {
             ExecutionResultResponse response = ExecutionResultResponse.htmlPreview(code);
             response.setRoomId(roomId);
             response.setLanguage("html");
-            broadcastExecutionResult(roomId, response);
+            if (isAuthorizedForRoom) {
+                broadcastExecutionResult(roomId, response);
+            }
             return response;
         }
 
@@ -92,10 +101,23 @@ public class Judge0Service {
             ExecutionResultResponse result = runViaJudge0(code, languageId, request.getStdin());
             result.setRoomId(roomId);
             result.setLanguage(language);
-            broadcastExecutionResult(roomId, result);
+            if (isAuthorizedForRoom) {
+                broadcastExecutionResult(roomId, result);
+            }
             return result;
+        } catch (BadRequestException ex) {
+            log.error("Execution validation error: {}", ex.getMessage());
+            ExecutionResultResponse errorResult = ExecutionResultResponse.error(
+                    "Bad Request",
+                    ex.getMessage(),
+                    null,
+                    ex.getMessage()
+            );
+            errorResult.setRoomId(roomId);
+            errorResult.setLanguage(language);
+            throw ex;
         } catch (Exception ex) {
-            log.error("Execution error via Judge0: {}", ex.getMessage(), ex);
+            log.error("Execution error via Judge0: {}", ex.getMessage());
             ExecutionResultResponse errorResult = ExecutionResultResponse.error(
                     "Error",
                     ex.getMessage(),
@@ -104,9 +126,21 @@ public class Judge0Service {
             );
             errorResult.setRoomId(roomId);
             errorResult.setLanguage(language);
-            broadcastExecutionResult(roomId, errorResult);
+            if (isAuthorizedForRoom) {
+                broadcastExecutionResult(roomId, errorResult);
+            }
             return errorResult;
         }
+    }
+
+    private boolean isRoomAuthorized(String roomId, String token) {
+        if (roomId == null || roomId.trim().isEmpty()) {
+            return false;
+        }
+        if (token == null || token.trim().isEmpty()) {
+            return false;
+        }
+        return roomTokenService.isValid(token, roomId, null);
     }
 
     private ExecutionResultResponse runViaJudge0(String code, int languageId, String stdin) {
@@ -133,11 +167,17 @@ public class Judge0Service {
         String token = submitBody.getToken();
         log.debug("Judge0 submission token: {}", token);
 
-        // Polling Judge0
+        // Polling Judge0 with maximum duration cutoff
         String pollUrl = apiUrl + "/submissions/" + token + "?base64_encoded=false";
         Judge0SubmissionResponse finalResult = null;
+        Instant startTime = Instant.now();
 
         for (int attempt = 1; attempt <= properties.getMaxPollAttempts(); attempt++) {
+            if (Duration.between(startTime, Instant.now()).toMillis() > MAX_EXECUTION_TIMEOUT_MS) {
+                log.warn("Judge0 execution exceeded max timeout cutoff of {} ms", MAX_EXECUTION_TIMEOUT_MS);
+                break;
+            }
+
             try {
                 Thread.sleep(properties.getPollIntervalMs());
             } catch (InterruptedException e) {

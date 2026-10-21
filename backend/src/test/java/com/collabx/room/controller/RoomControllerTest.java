@@ -107,4 +107,34 @@ class RoomControllerTest {
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.success").value(false));
     }
+
+    @Test
+    @DisplayName("Attempt to create duplicate room returns 400 Bad Request")
+    void testCreateRoom_DuplicateRejected() throws Exception {
+        CreateRoomRequest req1 = new CreateRoomRequest("DUPROOM1", "Alice", "pass123");
+        mockMvc.perform(post("/api/rooms")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req1)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.roomToken").isNotEmpty());
+
+        CreateRoomRequest req2 = new CreateRoomRequest("DUPROOM1", "Bob", "pass456");
+        mockMvc.perform(post("/api/rooms")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req2)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.message").value("Room ID already in use"));
+    }
+
+    @Test
+    @DisplayName("Create room with short password returns 400 Bad Request")
+    void testCreateRoom_InvalidPassword() throws Exception {
+        CreateRoomRequest request = new CreateRoomRequest("SHORTPW", "Alice", "ab");
+        mockMvc.perform(post("/api/rooms")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.success").value(false));
+    }
 }

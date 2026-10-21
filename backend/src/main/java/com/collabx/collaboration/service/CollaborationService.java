@@ -14,6 +14,9 @@ import java.util.concurrent.ConcurrentHashMap;
 public class CollaborationService {
 
     private static final Logger log = LoggerFactory.getLogger(CollaborationService.class);
+    private static final int MAX_USERS_PER_ROOM = 50;
+    private static final int MAX_CHAT_LENGTH = 1000;
+    private static final int MAX_CODE_LENGTH = 100_000;
 
     private final SimpMessagingTemplate messagingTemplate;
     private final RoomService roomService;
@@ -40,12 +43,27 @@ public class CollaborationService {
         String normalizedRoomId = roomId.trim().toUpperCase();
         String normalizedUsername = username.trim();
 
+        // Verify room exists in database before establishing active collaboration state
+        try {
+            roomService.getRoom(normalizedRoomId);
+        } catch (Exception e) {
+            log.warn("Join rejected: Room '{}' not found in database", normalizedRoomId);
+            return;
+        }
+
         sessionRoomMap.put(sessionId, normalizedRoomId);
         sessionUserMap.put(sessionId, normalizedUsername);
 
-        roomUsersMap.computeIfAbsent(normalizedRoomId, k -> ConcurrentHashMap.newKeySet())
-                .add(new UserPresenceDto(sessionId, normalizedUsername));
+        Set<UserPresenceDto> users = roomUsersMap.computeIfAbsent(normalizedRoomId, k -> ConcurrentHashMap.newKeySet());
+        // Deduplicate presence: replace any previous entry with matching username on reconnect
+        users.removeIf(u -> u.getUsername().equalsIgnoreCase(normalizedUsername));
 
+        if (users.size() >= MAX_USERS_PER_ROOM) {
+            log.warn("Room '{}' reached maximum user capacity ({})", normalizedRoomId, MAX_USERS_PER_ROOM);
+            return;
+        }
+
+        users.add(new UserPresenceDto(sessionId, normalizedUsername));
         log.info("User '{}' (session: {}) joined room '{}'", normalizedUsername, sessionId, normalizedRoomId);
 
         broadcastPresence(normalizedRoomId);
@@ -95,7 +113,6 @@ public class CollaborationService {
 
     public void broadcastPresence(String roomId) {
         List<UserPresenceDto> users = getOnlineUsers(roomId);
-        // Broadcast on STOMP topic for this room
         messagingTemplate.convertAndSend("/topic/room." + roomId + ".users", users);
     }
 
@@ -121,13 +138,20 @@ public class CollaborationService {
 
     public void broadcastCode(String roomId, CodeSyncDto dto) {
         String normalizedRoomId = roomId.trim().toUpperCase();
-        // Persist periodically or on change
-        roomService.saveCode(normalizedRoomId, dto.getCode());
+        String code = dto.getCode();
+        if (code != null && code.length() > MAX_CODE_LENGTH) {
+            code = code.substring(0, MAX_CODE_LENGTH);
+            dto.setCode(code);
+        }
+        roomService.saveCode(normalizedRoomId, code);
         messagingTemplate.convertAndSend("/topic/room." + normalizedRoomId + ".code", dto);
     }
 
     public void broadcastChat(String roomId, ChatMessageDto message) {
         String normalizedRoomId = roomId.trim().toUpperCase();
+        if (message.getMessage() != null && message.getMessage().length() > MAX_CHAT_LENGTH) {
+            message.setMessage(message.getMessage().substring(0, MAX_CHAT_LENGTH));
+        }
         messagingTemplate.convertAndSend("/topic/room." + normalizedRoomId + ".chat", message);
     }
 

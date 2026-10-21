@@ -53,6 +53,21 @@ class CollaborationServiceTest {
     }
 
     @Test
+    @DisplayName("User reconnection with same username deduplicates presence")
+    void testUserReconnectionDeduplicated() {
+        when(roomService.getRoom("ROOM1")).thenReturn(new RoomDto("ROOM1", "Alice", "// code", "javascript", Instant.now()));
+
+        // First connection
+        collaborationService.userJoined("session-old", "ROOM1", "Alice");
+        // Reconnect with new session
+        collaborationService.userJoined("session-new", "ROOM1", "Alice");
+
+        List<UserPresenceDto> users = collaborationService.getOnlineUsers("ROOM1");
+        assertEquals(1, users.size(), "Should have exactly 1 presence entry for Alice, not duplicate");
+        assertEquals("session-new", users.get(0).getId());
+    }
+
+    @Test
     @DisplayName("User left updates presence")
     void testUserLeft() {
         when(roomService.getRoom("ROOM1")).thenReturn(new RoomDto("ROOM1", "Alice", "// code", "javascript", Instant.now()));

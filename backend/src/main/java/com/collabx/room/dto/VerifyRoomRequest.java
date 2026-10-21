@@ -10,12 +10,27 @@ public class VerifyRoomRequest {
     @NotBlank(message = "Password is required")
     private String password;
 
+    private String username;
+
     public VerifyRoomRequest() {
     }
 
     public VerifyRoomRequest(String roomId, String password) {
+        this(roomId, password, null);
+    }
+
+    public VerifyRoomRequest(String roomId, String password, String username) {
         this.roomId = roomId;
         this.password = password;
+        this.username = username;
+    }
+
+    public String getUsername() {
+        return username;
+    }
+
+    public void setUsername(String username) {
+        this.username = username;
     }
 
     public String getRoomId() {

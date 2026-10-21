@@ -37,11 +37,6 @@ export default function HeroForms() {
       return;
     }
 
-    const roomId = Math.random()
-      .toString(36)
-      .substring(2, 10)
-      .toUpperCase();
-
     try {
       const response = await fetch(`${API_URL}/rooms`, {
         method: "POST",
@@ -49,7 +44,6 @@ export default function HeroForms() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          roomId,
           username: trimmedName,
           password: trimmedPassword,
         }),
@@ -62,14 +56,26 @@ export default function HeroForms() {
         return;
       }
 
+      const createdRoomId = data?.room?.roomId || data?.roomId || data?.data?.roomId;
+      const roomToken = data?.roomToken || data?.room?.roomToken || data?.token;
+
+      if (!createdRoomId) {
+        toast.error("Server did not return a valid room ID.");
+        return;
+      }
+
       localStorage.setItem("username", trimmedName);
+      if (roomToken) {
+        sessionStorage.setItem(`collabx_token_${createdRoomId}`, roomToken);
+      }
 
       toast.success("Room created successfully!");
 
-      navigate(`/room/${roomId}`, {
+      navigate(`/room/${createdRoomId}`, {
         state: {
           username: trimmedName,
           password: trimmedPassword,
+          token: roomToken,
         },
       });
     } catch (error) {
@@ -108,9 +114,10 @@ export default function HeroForms() {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-  roomId: trimmedRoomId,
-  password: trimmedPassword,
-}),
+            roomId: trimmedRoomId,
+            password: trimmedPassword,
+            username: trimmedName,
+          }),
         }
       );
 
@@ -121,7 +128,11 @@ export default function HeroForms() {
         return;
       }
 
+      const roomToken = data?.roomToken || data?.token;
       localStorage.setItem("username", trimmedName);
+      if (roomToken) {
+        sessionStorage.setItem(`collabx_token_${trimmedRoomId}`, roomToken);
+      }
 
       toast.success("Joined room successfully!");
 
@@ -129,6 +140,7 @@ export default function HeroForms() {
         state: {
           username: trimmedName,
           password: trimmedPassword,
+          token: roomToken,
         },
       });
     } catch (error) {

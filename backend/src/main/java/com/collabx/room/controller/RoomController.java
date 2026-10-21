@@ -32,6 +32,8 @@ public class RoomController {
         response.put("message", "Room created successfully");
         response.put("room", roomDto);
         response.put("data", roomDto);
+        response.put("roomId", roomDto.getRoomId());
+        response.put("roomToken", roomDto.getRoomToken());
 
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }

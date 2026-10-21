@@ -3,6 +3,7 @@ package com.collabx.room.service;
 import com.collabx.common.exception.BadRequestException;
 import com.collabx.common.exception.InvalidPasswordException;
 import com.collabx.common.exception.ResourceNotFoundException;
+import com.collabx.common.security.RoomTokenService;
 import com.collabx.room.dto.CreateRoomRequest;
 import com.collabx.room.dto.RoomDto;
 import com.collabx.room.dto.VerifyRoomRequest;
@@ -13,13 +14,13 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
-import java.time.Instant;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -33,12 +34,14 @@ class RoomServiceTest {
     private RoomRepository roomRepository;
 
     private PasswordEncoder passwordEncoder;
+    private RoomTokenService roomTokenService;
     private RoomService roomService;
 
     @BeforeEach
     void setUp() {
         passwordEncoder = new BCryptPasswordEncoder();
-        roomService = new RoomService(roomRepository, passwordEncoder);
+        roomTokenService = new RoomTokenService("01234567890123456789012345678901");
+        roomService = new RoomService(roomRepository, passwordEncoder, roomTokenService);
     }
 
     @Test
@@ -55,6 +58,8 @@ class RoomServiceTest {
         assertNotNull(dto.getRoomId());
         assertEquals(8, dto.getRoomId().length());
         assertEquals("Alice", dto.getCreatorUsername());
+        assertNotNull(dto.getRoomToken());
+        assertTrue(roomTokenService.isValid(dto.getRoomToken(), dto.getRoomId(), "Alice"));
         verify(roomRepository, times(1)).save(any(Room.class));
     }
 
@@ -71,6 +76,20 @@ class RoomServiceTest {
         assertNotNull(dto);
         assertEquals("MYROOM1", dto.getRoomId());
         assertEquals("Bob", dto.getCreatorUsername());
+        assertNotNull(dto.getRoomToken());
+    }
+
+    @Test
+    @DisplayName("Attempt to overwrite existing room with duplicate ID throws BadRequestException")
+    void testCreateRoom_DuplicateIdRejected() {
+        CreateRoomRequest request = new CreateRoomRequest("EXISTING", "Eve", "hacker123");
+        Room existing = new Room("EXISTING", "existing code", "hash", "Alice", "javascript");
+
+        when(roomRepository.findByRoomId("EXISTING")).thenReturn(Optional.of(existing));
+
+        BadRequestException ex = assertThrows(BadRequestException.class, () -> roomService.createRoom(request));
+        assertEquals("Room ID already in use", ex.getMessage());
+        verify(roomRepository, never()).save(any(Room.class));
     }
 
     @Test
@@ -81,18 +100,66 @@ class RoomServiceTest {
     }
 
     @Test
-    @DisplayName("Verify room with correct password succeeds")
+    @DisplayName("Create room with short password fails")
+    void testCreateRoom_ShortPassword() {
+        CreateRoomRequest request = new CreateRoomRequest(null, "Bob", "ab");
+        assertThrows(BadRequestException.class, () -> roomService.createRoom(request));
+    }
+
+    @Test
+    @DisplayName("Verify room with correct BCrypt password succeeds and returns token")
     void testVerifyRoom_Success() {
         String hash = passwordEncoder.encode("secretPass");
         Room room = new Room("ROOM123", "", hash, "Alice", "javascript");
 
         when(roomRepository.findByRoomId("ROOM123")).thenReturn(Optional.of(room));
 
-        VerifyRoomResponse response = roomService.verifyRoom(new VerifyRoomRequest("ROOM123", "secretPass"));
+        VerifyRoomResponse response = roomService.verifyRoom(new VerifyRoomRequest("ROOM123", "secretPass", "Charlie"));
 
         assertNotNull(response);
         assertTrue(response.isSuccess());
         assertEquals("ROOM123", response.getRoomId());
+        assertNotNull(response.getRoomToken());
+        assertTrue(roomTokenService.isValid(response.getRoomToken(), "ROOM123", "Charlie"));
+    }
+
+    @Test
+    @DisplayName("Legacy SHA-256 password is authenticated and migrated to BCrypt")
+    void testVerifyRoom_LegacySha256MigratedToBcrypt() throws Exception {
+        String legacyPlain = "oldLegacyPassword";
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        byte[] hashBytes = digest.digest(legacyPlain.getBytes(StandardCharsets.UTF_8));
+        StringBuilder sb = new StringBuilder();
+        for (byte b : hashBytes) {
+            String hex = Integer.toHexString(0xff & b);
+            if (hex.length() == 1) sb.append('0');
+            sb.append(hex);
+        }
+        String sha256Hash = sb.toString();
+
+        Room room = new Room("LEGACY1", "", sha256Hash, "Dave", "javascript");
+        when(roomRepository.findByRoomId("LEGACY1")).thenReturn(Optional.of(room));
+        when(roomRepository.save(any(Room.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        VerifyRoomResponse response = roomService.verifyRoom(new VerifyRoomRequest("LEGACY1", legacyPlain, "Dave"));
+
+        assertTrue(response.isSuccess());
+        // Verify the room's password was updated to BCrypt
+        assertTrue(room.getPasswordHash().startsWith("$2a$") || room.getPasswordHash().startsWith("$2b$"));
+        assertTrue(passwordEncoder.matches(legacyPlain, room.getPasswordHash()));
+        verify(roomRepository, times(1)).save(room);
+    }
+
+    @Test
+    @DisplayName("Plaintext password in database is strictly rejected")
+    void testVerifyRoom_PlaintextPasswordRejected() {
+        Room room = new Room("PLAIN1", "", "plainPassword123", "Dave", "javascript");
+        when(roomRepository.findByRoomId("PLAIN1")).thenReturn(Optional.of(room));
+
+        assertThrows(InvalidPasswordException.class, () ->
+                roomService.verifyRoom(new VerifyRoomRequest("PLAIN1", "plainPassword123"))
+        );
+        verify(roomRepository, never()).save(any(Room.class));
     }
 
     @Test
