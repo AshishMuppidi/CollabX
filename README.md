@@ -1,6 +1,6 @@
 # CollabX 2.0 - Backend Security, Correctness & Integration Hardening
 
-> Production-ready, secure collaborative code editor migrated from PERN to **Java 17, Spring Boot 3.3.x, MySQL 8, Spring WebSocket (STOMP + SockJS), and React 18**.
+
 
 ---
 
