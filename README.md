@@ -1,5 +1,5 @@
 # CollabX 2.0 - Backend Security, Correctness & Integration Hardening
-
+Real-time collaborative coding platform built with Java Spring Boot, React, Monaco Editor, STOMP/WebSockets, MySQL, and Judge0.
 
 
 ---
